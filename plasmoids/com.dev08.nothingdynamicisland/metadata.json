@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "com.dev08.nothingdynamicisland",
+        "Name": "Nothing Dynamic Island",
+        "Description": "Nothing-OS style status island: clock, battery, volume, network, media and system stats",
+        "Category": "System Information",
+        "Icon": "computer",
+        "Authors": [ { "Name": "dev08" } ],
+        "License": "GPL-3.0-or-later",
+        "Version": "1.0",
+        "EnabledByDefault": true
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

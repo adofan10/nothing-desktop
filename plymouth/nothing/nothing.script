@@ -1,0 +1,155 @@
+## Nothing OS dot-matrix boot / shutdown animation
+## Lattice recovered from the hexagon_dots theme by Aditya Shakya (@adi1090x)
+## -- MIT, see LICENSE.  The upstream 32-frame sequence was a one-shot ping:
+## 17 frames of motion, 15 frozen, then a hard cut back to frame 0.  The frames
+## here are re-rendered by make-frames.py at display scale as a true seamless
+## loop, so there is no freeze and no cut.
+
+// Screen size
+screen.w = Window.GetWidth(0);
+screen.h = Window.GetHeight(0);
+screen.half.w = Window.GetWidth(0) / 2;
+screen.half.h = Window.GetHeight(0) / 2;
+
+// Question prompt
+question = null;
+answer = null;
+
+// Message
+message = null;
+
+// Password prompt
+bullets = null;
+prompt = null;
+bullet.image = Image.Text("*", 1, 1, 1);
+
+// Flow
+state.status = "play";
+state.time = 0.0;
+
+//--------------------------------- Dot matrix animation ------------------------------
+
+// 60 frames at 30 Hz is one 2.0 s ripple.  Pin the rate rather than inheriting
+// the plugin default, so the tempo does not move if that default ever changes.
+frames = 60;
+Plymouth.SetRefreshRate(30);
+
+// The frames are rendered for a 3840-wide panel, which is what this machine
+// boots at -- so the common case loads them 1:1 and never scales.  That is what
+// keeps the per-frame blit cheap; the old script inflated every frame to
+// 2194x1645 and spent ~440 MB holding the results.  A smaller framebuffer
+// (early KMS fallback, or a VM) still gets a proportional cluster.
+scale = screen.w / 3840;
+if (scale > 1.25)
+  {
+    scale = 1.25;
+  }
+if (scale < 0.25)
+  {
+    scale = 0.25;
+  }
+
+needs_scale = 1;
+if (scale > 0.99)
+  {
+    if (scale < 1.01)
+      {
+        needs_scale = 0;
+      }
+  }
+
+for (i = 0; i < frames; i++)
+  {
+    frame = Image("dot-" + i + ".png");
+    if (needs_scale)
+      {
+        // Chained Image().Scale() trips the script engine -- keep them split.
+        target.w = Math.Int(frame.GetWidth() * scale);
+        target.h = Math.Int(frame.GetHeight() * scale);
+        dot_image[i] = frame.Scale(target.w, target.h);
+      }
+    else
+      {
+        dot_image[i] = frame;
+      }
+  }
+
+dot_sprite = Sprite();
+dot_sprite.SetImage(dot_image[0]);
+
+// Centre the matrix on screen.
+dot_sprite.SetX(Window.GetX() + (screen.w / 2 - dot_image[0].GetWidth() / 2));
+dot_sprite.SetY(Window.GetY() + (screen.h / 2 - dot_image[0].GetHeight() / 2));
+
+progress = 0;
+
+fun refresh_callback ()
+  {
+    // One frame per tick.  The phase lives in the frames, so every tick is a
+    // real step -- no repeated blits, and frame 59 flows straight into frame 0.
+    dot_sprite.SetImage(dot_image[progress % frames]);
+    progress++;
+  }
+
+Plymouth.SetRefreshFunction (refresh_callback);
+
+//------------------------------------- Question prompt -------------------------------
+fun DisplayQuestionCallback(prompt, entry) {
+    question = null;
+    answer = null;
+
+    if (entry == "")
+        entry = "<answer>";
+
+    question.image = Image.Text(prompt, 1, 1, 1);
+    question.sprite = Sprite(question.image);
+    question.sprite.SetX(screen.half.w - question.image.GetWidth() / 2);
+    question.sprite.SetY(screen.h - 4 * question.image.GetHeight());
+
+    answer.image = Image.Text(entry, 1, 1, 1);
+    answer.sprite = Sprite(answer.image);
+    answer.sprite.SetX(screen.half.w - answer.image.GetWidth() / 2);
+    answer.sprite.SetY(screen.h - 2 * answer.image.GetHeight());
+}
+Plymouth.SetDisplayQuestionFunction(DisplayQuestionCallback);
+
+//------------------------------------- Password prompt -------------------------------
+fun DisplayPasswordCallback(nil, bulletCount) {
+    state.status = "pause";
+    totalWidth = bulletCount * bullet.image.GetWidth();
+    startPos = screen.half.w - totalWidth / 2;
+
+    // ALL-CAPS to match the Nothing lock screen and SDDM labels.
+    prompt.image = Image.Text("ENTER PASSWORD", 1, 1, 1);
+    prompt.sprite = Sprite(prompt.image);
+    prompt.sprite.SetX(screen.half.w - prompt.image.GetWidth() / 2);
+    prompt.sprite.SetY(screen.h - 4 * prompt.image.GetHeight());
+
+    // Clear all bullets (user might hit backspace)
+    bullets = null;
+    for (i = 0; i < bulletCount; i++) {
+        bullets[i].sprite = Sprite(bullet.image);
+        bullets[i].sprite.SetX(startPos + i * bullet.image.GetWidth());
+        bullets[i].sprite.SetY(screen.h - 2 * bullet.image.GetHeight());
+    }
+}
+Plymouth.SetDisplayPasswordFunction(DisplayPasswordCallback);
+
+//--------------------------- Normal display (unset all text) ----------------------
+fun DisplayNormalCallback() {
+    state.status = "play";
+    bullets = null;
+    prompt = null;
+    message = null;
+    question = null;
+    answer = null;
+}
+Plymouth.SetDisplayNormalFunction(DisplayNormalCallback);
+
+//----------------------------------------- Message --------------------------------
+fun MessageCallback(text) {
+    message.image = Image.Text(text, 1, 1, 1);
+    message.sprite = Sprite(message.image);
+    message.sprite.SetPosition(screen.half.w - message.image.GetWidth() / 2, message.image.GetHeight());
+}
+Plymouth.SetMessageFunction(MessageCallback);

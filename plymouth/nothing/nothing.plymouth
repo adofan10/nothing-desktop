@@ -1,0 +1,9 @@
+[Plymouth Theme]
+Name=Nothing
+Description=Nothing OS dot-matrix boot and shutdown animation
+Comment=Frames from the hexagon_dots theme by Aditya Shakya (@adi1090x), MIT. Adapted for HiDPI.
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/nothing
+ScriptFile=/usr/share/plymouth/themes/nothing/nothing.script

@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "dev08"
+            }
+        ],
+        "Category": "Miscellaneous",
+        "Description": "One short quote a day, in the Nothing style.",
+        "EnabledByDefault": true,
+        "Icon": "/icon.png",
+        "Id": "com.dev08.nothingquote",
+        "License": "GPL-3.0",
+        "Name": "Nothing Quote of the Day",
+        "Version": "1.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

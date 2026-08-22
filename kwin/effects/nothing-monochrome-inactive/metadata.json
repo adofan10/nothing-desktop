@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "KWin/Effect",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "dev08"
+            }
+        ],
+        "Category": "Appearance",
+        "Description": "Drains unfocused windows to greyscale instead of making them see-through",
+        "EnabledByDefault": false,
+        "Id": "nothing-monochrome-inactive",
+        "License": "GPL",
+        "Name": "Monochrome Inactive Windows",
+        "Version": "1.0"
+    },
+    "X-KDE-Ordering": 55,
+    "X-Plasma-API": "javascript"
+}
