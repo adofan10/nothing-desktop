@@ -1,0 +1,14 @@
+{
+    "KPackageStructure": "KWin/Script",
+    "KPlugin": {
+        "Id": "nothing-window-cycle",
+        "Name": "Nothing Window Cycle",
+        "Description": "Minimise the active window and focus the next one; restore the last one put away. Meant to be driven by three-finger touchpad swipes.",
+        "Icon": "preferences-system-windows",
+        "Authors": [ { "Name": "dev08" } ],
+        "License": "GPL-3.0-or-later",
+        "Version": "1.0",
+        "EnabledByDefault": false
+    },
+    "X-Plasma-API": "javascript"
+}

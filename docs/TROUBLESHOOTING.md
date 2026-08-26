@@ -197,6 +197,168 @@ in Dolphin once and it sticks.
 
 ---
 
+## The island's pickers
+
+### A custom plasmoid vanished from the panel with no error anywhere
+
+An **unresolvable QML import kills a Plasma applet silently** — no import error, no
+QML error, nothing in the journal. The applet simply never appears.
+
+Diagnose it by checking whether its side effects still run rather than hunting for a
+log line:
+
+```bash
+pgrep -f 'scripts/stats.sh'      # island alive if this returns anything
+```
+
+Then bisect the imports. `org.kde.plasma.private.volume` and
+`org.kde.plasma.private.brightnesscontrolplugin` are **not** usable from a custom
+applet here and will do exactly this.
+
+### Wi-Fi shows networks but joining does nothing
+
+The island joins through `PlasmaNM.Handler`, which needs NetworkManager's kded
+secret agent for anything it cannot ask for inline (enterprise, 802.1X):
+
+```bash
+qdbus6 org.kde.kded6 /kded loadedModules | tr ' ' '\n' | grep networkmanagement
+```
+
+If that is empty, load it: System Settings → Startup and Shutdown → Background
+Services.
+
+### Bluetooth pairing never shows a PIN dialog
+
+The same check for bluedevil:
+
+```bash
+qdbus6 org.kde.kded6 /kded loadedModules | tr ' ' '\n' | grep bluedevil
+```
+
+The island calls `org.bluez.Device1.Pair` directly precisely so bluedevil's agent
+keeps the prompt. Do not swap `scripts/bt-pair.sh` to `bluetoothctl` — it registers
+a competing agent and the prompt disappears.
+
+### Lyrics say NO LYRICS FOUND
+
+Not every track is in [LRCLIB](https://lrclib.net), and remixes and slowed edits
+often are not under the name your player reports. Check by hand:
+
+```bash
+curl -s "https://lrclib.net/api/search?track_name=TITLE&artist_name=ARTIST" | head -c 400
+```
+
+Lyrics are only fetched while the now-playing sheet is open, so an empty result on a
+sheet you just opened may simply be the request still in flight.
+
+### Lyrics are in sync at the start and drift later
+
+That is a slowed or sped-up edit matched against the original. The fetcher rescales
+timestamps by the duration ratio when it is between 0.6x and 1.7x, but an edit that
+also cuts a verse cannot be fixed by scaling.
+
+---
+
+## The app drawer
+
+### Meta does not open it
+
+Plasma routes Meta to whichever applet declares
+`X-Plasma-Provides: org.kde.plasma.launchermenu`. Confirm the binding still exists:
+
+```bash
+grep 'activate application launcher' ~/.config/kglobalshortcutsrc
+```
+
+It should read `Meta\tAlt+F1`. If the drawer is missing from the dock entirely,
+`./install.sh 40` rebuilds the panels.
+
+### The grid is garbled the first time it opens
+
+Fixed in this repo, but the cause is worth knowing: the compositor sizes a
+full-screen window a frame *after* it is shown, so the first layout runs against a
+zero-width grid. Anything that changes the model later (typing in the search field)
+appears to "fix" it.
+
+---
+
+## Touchpad gestures
+
+### Three-finger swipes do nothing
+
+Check the three links in the chain:
+
+```bash
+nothing-gestures --status          # device, config, and whether the KWin bits loaded
+systemctl --user status nothing-gestures.service
+```
+
+Most often it is group membership — reading the touchpad needs `input`:
+
+```bash
+id -nG | grep -q input || sudo gpasswd -a "$USER" input   # then log out and back in
+```
+
+### Swipes register but nothing happens on screen
+
+The KWin script is not loaded:
+
+```bash
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.isScriptLoaded nothing-window-cycle
+kwriteconfig6 --file kwinrc --group Plugins --key nothing-window-cycleEnabled true
+qdbus6 org.kde.KWin /KWin reconfigure
+```
+
+Note that **`reconfigure` does not reload a KWin script's code** — it only enables
+or disables it. After editing the JS you need:
+
+```bash
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript nothing-window-cycle
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript \
+    ~/.local/share/kwin/scripts/nothing-window-cycle/contents/code/main.js nothing-window-cycle
+qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.start
+```
+
+Script `print()` and `console.log` are filtered out of the journal; **`console.warn`
+shows up**, as `js:` under the kwin_wayland unit.
+
+### Gestures fire when I did not mean them to, or get missed
+
+Measure your own swipes rather than guessing:
+
+```bash
+nothing-gestures --calibrate     # prints per-swipe totals, changes nothing
+```
+
+Then set `THRESHOLD` in `~/.config/nothing-gestures.conf` a little below your
+shortest deliberate swipe. On the reference machine real swipes land between 4.6 and
+15.0. Raise `AXIS_RATIO` if vertical swipes are triggering desktop switches.
+
+### The gestures switch desktops instead
+
+That is KWin's own three-finger left/right. Only up/down are claimed here, and a
+swipe must be `AXIS_RATIO` times more vertical than horizontal to count.
+
+---
+
+## Widgets are empty after logging in
+
+The weather widget and friends fetch once from `Component.onCompleted`, and
+plasmashell starts before Wi-Fi associates. `nothing-net-reload` restarts the shell
+on a genuine offline→online edge:
+
+```bash
+nothing-net-reload --status
+systemctl --user status nothing-net-reload.service
+cat ~/.local/state/nothing-net-reload.log
+```
+
+`nothing-net-reload --now` forces it. If the shell restarts more often than you like
+mid-session — waking from suspend, hopping networks — raise `COOLDOWN` in
+`~/.config/nothing-net-reload.conf`, or set `ENABLED=0` to turn it off entirely.
+
+---
+
 ## Updates
 
 **A widget-pack update overwrites local patches.** If you patch anything under

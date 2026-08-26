@@ -9,12 +9,12 @@ PLASMOIDS="$LOCAL/plasma/plasmoids"
 
 say "Custom plasmoids"
 mkdir -p "$PLASMOIDS"
-for p in com.dev08.nothingdynamicisland com.dev08.nothingquote; do
+for p in com.dev08.nothingdynamicisland com.dev08.nothingquote com.dev08.nothingappdrawer; do
     rm -rf "${PLASMOIDS:?}/$p"
     cp -r "$REPO/plasmoids/$p" "$PLASMOIDS/"
     step "$p"
 done
-chmod +x "$PLASMOIDS/com.dev08.nothingdynamicisland/contents/scripts/stats.sh" 2>/dev/null || true
+chmod +x "$PLASMOIDS/com.dev08.nothingdynamicisland/contents/scripts/"*.sh 2>/dev/null || true
 
 # The quote widget renders in the same serif faces as the rest of the grid.
 # Those faces are bundled inside jaxparrow07's date widget; this repo does not
@@ -44,6 +44,34 @@ kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled true
 kwriteconfig6 --file kwinrc --group Plugins --key contrastEnabled true
 step "installed and enabled"
 
+say "KWin script -- window cycle for the touchpad gestures"
+mkdir -p "$LOCAL/kwin/scripts"
+rm -rf "$LOCAL/kwin/scripts/nothing-window-cycle"
+cp -r "$REPO/kwin/scripts/nothing-window-cycle" "$LOCAL/kwin/scripts/"
+kwriteconfig6 --file kwinrc --group Plugins --key nothing-window-cycleEnabled true
+qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true
+step "registers NothingMinimiseFocusNext / NothingRestoreLast"
+
+say "Three-finger touchpad gestures"
+# KWin can bind touchpad swipes only from C++ -- registerTouchpadSwipeShortcut()
+# is absent from the JS API that scripts get, and nothing on KWin's D-Bus exposes
+# it either. So a small watcher reads libinput and invokes the two shortcuts
+# above. It needs no privilege beyond membership of the `input` group.
+install -m 755 "$REPO/services/nothing-gestures" "$HOME/.local/bin/nothing-gestures"
+install -m 644 "$REPO/services/nothing-gestures.service" "$HOME/.config/systemd/user/"
+[ -f "$HOME/.config/nothing-gestures.conf" ] || \
+    install -m 644 "$REPO/services/nothing-gestures.conf" "$HOME/.config/nothing-gestures.conf"
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+if ! id -nG | tr ' ' '\n' | grep -qx input; then
+    warn "you are not in the 'input' group, so the gestures cannot read the touchpad"
+    warn "  sudo gpasswd -a $USER input   # then log out and back in"
+    warn "  note: this lets any process you run read every input device, keyboard included"
+elif systemctl --user enable --now nothing-gestures.service >/dev/null 2>&1; then
+    step "3 fingers down = minimise + focus next, up = restore"
+else
+    warn "could not enable nothing-gestures.service"
+fi
+
 say "Konsole theme"
 mkdir -p "$LOCAL/konsole"
 cp "$REPO/konsole/Nothing.colorscheme" "$REPO/konsole/Nothing.profile" "$LOCAL/konsole/"
@@ -51,6 +79,27 @@ kwriteconfig6 --file konsolerc --group "Desktop Entry" --key DefaultProfile "Not
 # Konsole only picks up a profile named here at launch; existing windows keep theirs.
 kwriteconfig6 --file konsolerc --group KonsoleWindow --key RememberProfile false 2>/dev/null || true
 step "Nothing.profile set as default"
+
+say "Widget reload on network-up"
+# Several widgets fetch exactly once from Component.onCompleted -- the weather
+# widget geocodes once and never retries -- and at login plasmashell is up
+# seconds before Wi-Fi associates, so they sit empty until something restarts the
+# shell. Plasma has no per-applet reload in its scripting API and no D-Bus call
+# for one, so this watches NetworkManager over D-Bus and restarts
+# plasma-plasmashell.service on a genuine offline->online edge. Debounced and
+# rate-limited; see services/nothing-net-reload for the knobs.
+mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
+install -m 755 "$REPO/services/nothing-net-reload" "$HOME/.local/bin/nothing-net-reload"
+install -m 644 "$REPO/services/nothing-net-reload.service" "$HOME/.config/systemd/user/"
+# never clobber settings someone has already tuned
+[ -f "$HOME/.config/nothing-net-reload.conf" ] || \
+    install -m 644 "$REPO/services/nothing-net-reload.conf" "$HOME/.config/nothing-net-reload.conf"
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+if systemctl --user enable --now nothing-net-reload.service >/dev/null 2>&1; then
+    step "watcher enabled"
+else
+    warn "could not enable nothing-net-reload.service -- widgets will not self-refresh"
+fi
 
 say "Appearance"
 plasma-apply-lookandfeel -a Nothing >/dev/null 2>&1 || warn "global theme not applied"

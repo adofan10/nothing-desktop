@@ -52,11 +52,16 @@ PlasmoidItem {
     readonly property string statsScript:
         Qt.resolvedUrl("../scripts/stats.sh").toString().replace("file://", "")
 
+    // The pill only draws volume, brightness, battery and the clock, so with the
+    // popup closed it asks for the cheap snapshot on a slower beat: 28 ms every
+    // 3 s instead of 89 ms every 2 s, which is ~0.9% of a core instead of ~4.4%.
+    // The full sweep -- CPU, memory, temperature, nmcli, bluetoothctl -- only
+    // runs while something is actually displaying it.
     P5Support.DataSource {
         id: statsSource
         engine: "executable"
-        connectedSources: [ root.statsScript ]
-        interval: 2000
+        connectedSources: [ root.statsScript + (root.panelOpen ? " full" : " lite") ]
+        interval: root.panelOpen ? 2000 : 3000
         onNewData: function (source, data) {
             var out = (data["stdout"] || "").trim()
             if (!out) return
@@ -76,6 +81,7 @@ PlasmoidItem {
                 case "net":   root.netName = v;                break
                 case "ntype": root.netType = v;                break
                 case "bt":    root.btName  = v;                break
+                case "wifi":  root.wifiRadio = (v === "1");     break
                 }
             }
         }
@@ -116,9 +122,11 @@ PlasmoidItem {
     // own and the seek bar sat frozen. Ask for it once a second while playing, and take
     // the answer from positionChanged -- updatePosition() resolves over D-Bus, so the
     // value is not there yet when the call returns.
+    // Only the popup shows a position, so this stops when the popup is shut.
+    // Reopening re-anchors immediately via triggeredOnStart.
     Timer {
         interval: 1000; repeat: true; triggeredOnStart: true
-        running: root.hasMedia && root.isPlaying
+        running: root.hasMedia && root.isPlaying && root.panelOpen
         onTriggered: if (root.player) root.player.updatePosition()
     }
 
@@ -149,6 +157,59 @@ PlasmoidItem {
         root.player.position = target
         root.mediaPosition = target
     }
+
+    // extra media state, for the now-playing sheet
+    readonly property var  mediaModel:  mprisModel
+    readonly property string album:     player ? (player.album || "") : ""
+    readonly property string playerName: player ? (player.identity || "") : ""
+    readonly property int  loopStatus:  player ? player.loopStatus : Mpris.LoopStatus.Unknown
+    readonly property int  shuffleStatus: player ? player.shuffle : Mpris.ShuffleStatus.Unknown
+    readonly property bool canGoNext:   player ? (player.canGoNext === true) : false
+    readonly property bool canGoPrev:   player ? (player.canGoPrevious === true) : false
+    readonly property int  playerCount: mprisModel.rowCount()
+
+    // MPRIS exposes several players at once (a browser tab and a music app, say);
+    // the island shows one and lets you step through the rest.
+    function cyclePlayer() {
+        var n = mprisModel.rowCount()
+        if (n > 1) mprisModel.currentIndex = (mprisModel.currentIndex + 1) % n
+    }
+    function toggleShuffle() {
+        if (!root.player) return
+        root.player.shuffle = (root.player.shuffle === Mpris.ShuffleStatus.On)
+                              ? Mpris.ShuffleStatus.Off : Mpris.ShuffleStatus.On
+    }
+    function cycleLoop() {
+        if (!root.player) return
+        switch (root.player.loopStatus) {
+        case Mpris.LoopStatus.None:     root.player.loopStatus = Mpris.LoopStatus.Playlist; break
+        case Mpris.LoopStatus.Playlist: root.player.loopStatus = Mpris.LoopStatus.Track;    break
+        default:                        root.player.loopStatus = Mpris.LoopStatus.None;     break
+        }
+    }
+
+    // Playback position, smoothed. MPRIS is only polled once a second, which is
+    // far too coarse to land a lyric line on the beat, so extrapolate between
+    // answers and re-anchor whenever the player actually tells us where it is.
+    property real smoothPosition: 0
+    onMediaPositionChanged: root.smoothPosition = root.mediaPosition
+    Timer {
+        interval: 100; repeat: true
+        running: root.hasMedia && root.isPlaying && root.sheet === "media"
+        onTriggered: root.smoothPosition += 100000
+    }
+    readonly property real positionSec: root.smoothPosition / 1000000
+
+    // Time-synced lyrics, fetched only while the now-playing sheet is open.
+    LyricsSource {
+        id: lyricsSource
+        active: root.sheet === "media"
+        track: root.track
+        artist: root.artist
+        album: root.album
+        durationSec: root.mediaLength / 1000000
+    }
+    readonly property var lyrics: lyricsSource
 
     function fmtTime(us) {
         if (!us || us <= 0) return "0:00"
@@ -218,6 +279,35 @@ PlasmoidItem {
         return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s
     }
 
+
+    // ------------------------------------------------------------ connectivity
+    // NetworkManager and BlueZ models are NOT held here. NetworkModel subscribes
+    // to every access point's signal-strength change, and BluezQt.Manager brings
+    // up a BlueZ client the moment it is referenced -- both would churn all day
+    // for a panel nobody has open. WifiSheet and BluetoothSheet each build their
+    // own inside ExpandedPanel's Loader, so they exist only while on screen.
+    property bool wifiRadio: true          // fed by stats.sh full, numeric
+
+    readonly property string btPairScript:
+        Qt.resolvedUrl("../scripts/bt-pair.sh").toString().replace("file://", "")
+
+    // BluezQt does not expose Device::pair() to QML, so the pairing request goes
+    // straight to BlueZ over D-Bus; bluedevil's agent puts up the PIN dialog.
+    function btPair(ubi) {
+        if (!ubi) return
+        root.exec("'" + root.btPairScript + "' pair '" + ubi + "'")
+    }
+    function btForget(ubi) {
+        if (!ubi) return
+        root.exec("'" + root.btPairScript + "' forget '" + ubi + "'")
+    }
+
+    // ------------------------------------------------------------ sheets
+    // "" = the island's home view, "wifi" / "bt" = a full-height picker.
+    property string sheet: ""
+    function openSheet(name) { root.sheet = name }
+    function closeSheet() { root.sheet = "" }
+
     // ------------------------------------------------------------ representations
     // The popup is our own frameless PlasmaCore.Dialog (below), NOT fullRepresentation --
     // Plasma would wrap that in its dialog frame and you'd see the panel's rounded corners
@@ -236,6 +326,10 @@ PlasmoidItem {
         if (anchor) root.anchorItem = anchor
         root.panelOpen = !root.panelOpen
     }
+
+    // A sheet is a navigation state inside the popup, not a separate window:
+    // closing the popup must drop it, or the island reopens mid-picker.
+    onPanelOpenChanged: if (!root.panelOpen) root.sheet = ""
 
     PlasmaCore.Dialog {
         id: islandDialog

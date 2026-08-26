@@ -1,0 +1,15 @@
+[Unit]
+Description=Three-finger touchpad window gestures (Nothing rice)
+Documentation=file:%h/.local/bin/nothing-gestures
+PartOf=graphical-session.target
+After=plasma-kwin_wayland.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nothing-gestures
+Restart=always
+RestartSec=5
+Slice=background.slice
+
+[Install]
+WantedBy=graphical-session.target

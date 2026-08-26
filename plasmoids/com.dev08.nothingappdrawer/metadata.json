@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "com.dev08.nothingappdrawer",
+        "Name": "Nothing App Drawer",
+        "Description": "Nothing-OS style app drawer: dot-matrix start button, alphabetical app grid with search and an A-Z rail",
+        "Category": "Application Launchers",
+        "Icon": "start-here-kde",
+        "Authors": [ { "Name": "dev08" } ],
+        "License": "GPL-3.0-or-later",
+        "Version": "1.0",
+        "EnabledByDefault": true
+    },
+    "X-Plasma-Provides": [ "org.kde.plasma.launchermenu" ],
+    "X-Plasma-RequiredExtensions": [ "LaunchApp" ],
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

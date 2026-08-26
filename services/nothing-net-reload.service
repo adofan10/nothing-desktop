@@ -1,0 +1,15 @@
+[Unit]
+Description=Reload Plasma widgets when the network comes up (Nothing rice)
+Documentation=file:%h/.local/bin/nothing-net-reload
+PartOf=graphical-session.target
+After=plasma-plasmashell.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/nothing-net-reload
+Restart=always
+RestartSec=10
+Slice=background.slice
+
+[Install]
+WantedBy=graphical-session.target

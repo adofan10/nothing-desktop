@@ -19,6 +19,22 @@ for k in font menuFont toolBarFont; do
 done
 kwriteconfig6 --file kdeglobals --group General --key fixed "Hack,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
 
+say "Stopping the network-up widget reloader"
+# It restarts plasmashell on its own, so it has to go before the layout is put
+# back or it could fire mid-restore.
+systemctl --user disable --now nothing-net-reload.service >/dev/null 2>&1 || true
+rm -f "$HOME/.config/systemd/user/nothing-net-reload.service" \
+      "$HOME/.local/bin/nothing-net-reload"
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+step "removed (config left at ~/.config/nothing-net-reload.conf)"
+
+say "Removing the touchpad gestures"
+systemctl --user disable --now nothing-gestures.service >/dev/null 2>&1 || true
+rm -f "$HOME/.config/systemd/user/nothing-gestures.service" "$HOME/.local/bin/nothing-gestures"
+kwriteconfig6 --file kwinrc --group Plugins --key nothing-window-cycleEnabled false
+systemctl --user daemon-reload >/dev/null 2>&1 || true
+step "gestures off, KWin script disabled"
+
 say "Disabling the monochrome-inactive effect"
 kwriteconfig6 --file kwinrc --group Plugins --key nothing-monochrome-inactiveEnabled false
 qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1 || true

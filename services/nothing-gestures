@@ -1,0 +1,164 @@
+#!/bin/bash
+# Three-finger touchpad swipes for the Nothing rice.
+#
+#   3 fingers DOWN  -> minimise the active window, focus the one underneath
+#   3 fingers UP    -> bring the last one back and focus it
+#
+# Why this is a separate daemon and not a KWin script: KWin *can* bind touchpad
+# swipes, but only from C++ --  EffectsHandler::registerTouchpadSwipeShortcut()
+# is not exposed to the JS API, which offers only registerShortcut and the
+# screen-edge calls. There is nothing on KWin's D-Bus either. So the gesture is
+# read here, straight off libinput, and dispatched to the two global shortcuts
+# that the `nothing-window-cycle` KWin script registers.
+#
+# No extra privileges are granted by this: reading /dev/input needs the `input`
+# group, which this account is already in. Check with `id -nG`. If it is not,
+# `sudo gpasswd -a "$USER" input` and log out -- but understand that membership
+# lets any process you run read every input device, keyboard included.
+#
+#   nothing-gestures              run the watcher (this is what the unit does)
+#   nothing-gestures --calibrate  print every swipe's totals, change nothing
+#   nothing-gestures --status     show the device, config and shortcut wiring
+set -u
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/nothing-gestures.conf"
+
+# defaults; override any of them in $CONF
+ENABLED=1
+FINGERS=3
+# Accumulated accelerated travel needed before a swipe counts, in libinput units.
+# Calibrated on this touchpad: deliberate three-finger swipes measured 4.6-15.0
+# units, so 3 catches the shortest flick with margin while sitting far above any
+# incidental drift. Raise it if gestures fire when you did not mean them to.
+THRESHOLD=3
+# How much more vertical than horizontal a swipe must be to count as up/down.
+# Keeps it clear of KWin's own 3-finger left/right desktop switching.
+AXIS_RATIO=15          # tenths, so 15 = 1.5x
+DEBUG=0
+
+DOWN_ACTION=NothingMinimiseFocusNext
+UP_ACTION=NothingRestoreLast
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+CALIBRATE=0
+case "${1:-}" in
+--calibrate) CALIBRATE=1; DEBUG=1 ;;
+--status) ;;
+esac
+
+log() { printf '%s\n' "$*" >&2; }
+
+# Prefer something that calls itself a touchpad, but fall back to whatever
+# reports the gesture capability -- the name varies by vendor.
+find_touchpad() {
+    libinput list-devices 2>/dev/null | awk '
+        /^Device:/       { name = $0; sub(/^Device:[[:space:]]*/, "", name) }
+        /^Kernel:/       { kernel = $2 }
+        /^Capabilities:/ {
+            if ($0 ~ /gesture/) {
+                if (tolower(name) ~ /touchpad/) { print kernel; exit }
+                if (fallback == "") fallback = kernel
+            }
+        }
+        END { if (fallback != "") print fallback }
+    ' | head -1
+}
+
+invoke() {
+    qdbus6 org.kde.kglobalaccel /component/kwin \
+        org.kde.kglobalaccel.Component.invokeShortcut "$1" >/dev/null 2>&1 \
+        || log "nothing-gestures: could not invoke $1 -- is the nothing-window-cycle KWin script enabled?"
+}
+
+# Fixed-point helper: libinput prints deltas like "-1.50", and forking bc for
+# every update event of every swipe would be absurd. Work in hundredths.
+to_centi() {
+    local v=$1 neg=0 i f
+    [[ $v == -* ]] && { neg=1; v=${v#-}; }
+    i=${v%%.*}
+    f=${v#*.}
+    [[ "$f" == "$v" ]] && f=0
+    f="${f}00"; f=${f:0:2}
+    [[ -z "$i" ]] && i=0
+    local n=$(( 10#$i * 100 + 10#$f ))
+    (( neg )) && n=$(( -n ))
+    printf '%s' "$n"
+}
+
+# Bash truncates toward zero, so -88/100 is 0 and the sign would be lost; carry
+# it explicitly or a calibration run reports every upward swipe as downward.
+fmt_centi() {
+    local v=$1 sign=""
+    [[ $v == -* ]] && { sign="-"; v=${v#-}; }
+    printf '%s%d.%02d' "$sign" $(( v / 100 )) $(( v % 100 ))
+}
+
+DEV=$(find_touchpad)
+
+if [ "${1:-}" = "--status" ]; then
+    echo "device:     ${DEV:-none found}"
+    echo "groups:     $(id -nG)"
+    echo "enabled=$ENABLED fingers=$FINGERS threshold=$THRESHOLD axis_ratio=$(( AXIS_RATIO / 10 )).$(( AXIS_RATIO % 10 ))x"
+    echo "down ->     $DOWN_ACTION"
+    echo "up   ->     $UP_ACTION"
+    echo -n "kwin script loaded: "
+    qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.isScriptLoaded nothing-window-cycle 2>/dev/null || echo "unknown"
+    echo -n "shortcuts registered: "
+    qdbus6 org.kde.kglobalaccel /component/kwin org.kde.kglobalaccel.Component.shortcutNames 2>/dev/null \
+        | grep -c Nothing
+    exit 0
+fi
+
+[ "$ENABLED" = "1" ] || { log "nothing-gestures: disabled in $CONF"; exit 0; }
+[ -n "$DEV" ] || { log "nothing-gestures: no gesture-capable touchpad found"; exit 1; }
+[ -r "$DEV" ] || { log "nothing-gestures: cannot read $DEV -- is this user in the 'input' group?"; exit 1; }
+
+log "nothing-gestures: watching $DEV (fingers=$FINGERS threshold=$THRESHOLD)"
+
+THRESH_CENTI=$(( THRESHOLD * 100 ))
+fingers=0; dx=0; dy=0; active=0
+
+# grep does the filtering in C. Without it bash would parse every POINTER_MOTION
+# line the touchpad produces, which is thousands per second while the cursor moves.
+libinput debug-events --device "$DEV" 2>/dev/null \
+  | grep --line-buffered -E "GESTURE_SWIPE_(BEGIN|UPDATE|END)" \
+  | while read -r _dev kind _ts nfingers rest; do
+    case "$kind" in
+    GESTURE_SWIPE_BEGIN)
+        fingers=${nfingers:-0}; dx=0; dy=0; active=1
+        ;;
+    GESTURE_SWIPE_UPDATE)
+        (( active )) || continue
+        # "  0.24/ 1.50 ( 0.47/ 3.00 unaccelerated)" -- take the accelerated pair
+        if [[ $rest =~ ^(-?[0-9]+\.[0-9]+)/[[:space:]]*(-?[0-9]+\.[0-9]+) ]]; then
+            dx=$(( dx + $(to_centi "${BASH_REMATCH[1]}") ))
+            dy=$(( dy + $(to_centi "${BASH_REMATCH[2]}") ))
+        fi
+        ;;
+    GESTURE_SWIPE_END)
+        (( active )) || continue
+        active=0
+        # libinput marks an aborted swipe; those must not fire anything
+        [[ $rest == *cancelled* ]] && { (( DEBUG )) && log "swipe cancelled"; continue; }
+
+        adx=${dx#-}; ady=${dy#-}
+        if (( DEBUG )); then
+            log "swipe: fingers=$fingers dx=$(fmt_centi "$dx") dy=$(fmt_centi "$dy")"
+        fi
+        (( CALIBRATE )) && continue
+
+        (( fingers == FINGERS )) || continue
+        # vertical enough, and far enough
+        (( ady * 10 > adx * AXIS_RATIO )) || continue
+        (( ady >= THRESH_CENTI )) || continue
+
+        # libinput's y grows downward
+        if (( dy > 0 )); then invoke "$DOWN_ACTION"; else invoke "$UP_ACTION"; fi
+        ;;
+    esac
+done
+
+log "nothing-gestures: libinput stream ended -- exiting for a restart"
+exit 1

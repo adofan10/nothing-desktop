@@ -1,0 +1,154 @@
+#!/bin/bash
+# Reload the Plasma widgets when the machine actually gets online.
+#
+# Why this exists: several widgets on this desktop fetch once from
+# Component.onCompleted -- the weather widget geocodes exactly once -- and at login
+# plasmashell is up seconds before Wi-Fi associates. Those widgets then sit empty
+# until the next manual restart. Nothing in Plasma reloads an applet in place
+# (there is no per-applet reload in the scripting API and no D-Bus call for it),
+# so the reload is a restart of plasma-plasmashell.service, which is quick and
+# loses nothing: applet config is already on disk.
+#
+# Online is read as a NUMBER off NetworkManager's D-Bus properties, never from
+# `nmcli` text, which is translated and would break under any other locale.
+#   Connectivity: 1 NONE  2 PORTAL  3 LIMITED  4 FULL
+#   State:        20 DISCONNECTED  50 CONNECTING  60 CONNECTED_LOCAL
+#                 70 CONNECTED_SITE  70+ CONNECTED_GLOBAL
+#
+#   nothing-net-reload            run the watcher (this is what the unit does)
+#   nothing-net-reload --now      reload right now, ignoring the cooldown
+#   nothing-net-reload --status   print what the watcher currently sees
+set -u
+
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/nothing-net-reload.conf"
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/nothing-net-reload.log"
+
+# defaults; override any of them in $CONF
+ENABLED=1
+DRY_RUN=0          # 1 = log what would happen, never restart anything
+DEBOUNCE=6         # seconds online before a reload -- lets DNS and routes settle
+COOLDOWN=600       # seconds between reloads, so a flapping link cannot thrash
+POLL=45            # fallback re-check even if D-Bus says nothing
+MAX_LOG=65536
+
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+NM_DEST=org.freedesktop.NetworkManager
+NM_PATH=/org/freedesktop/NetworkManager
+
+log() {
+    if [ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt "$MAX_LOG" ]; then
+        tail -c $((MAX_LOG / 2)) "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+    fi
+    printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"
+}
+
+nm_prop() {   # nm_prop <PropertyName> -> bare integer, or empty
+    busctl --system get-property "$NM_DEST" "$NM_PATH" "$NM_DEST" "$1" 2>/dev/null \
+        | awk '{print $2}'
+}
+
+is_online() {
+    local conn state
+    conn=$(nm_prop Connectivity)
+    state=$(nm_prop State)
+    # FULL connectivity is the honest answer. If connectivity checking is off NM
+    # reports UNKNOWN(0), so fall back to the device state instead of never firing.
+    if [ "${conn:-0}" = "4" ]; then return 0; fi
+    if [ "${conn:-0}" = "0" ] && [ "${state:-0}" -ge 70 ] 2>/dev/null; then return 0; fi
+    return 1
+}
+
+shell_running() { systemctl --user is-active --quiet plasma-plasmashell.service; }
+
+reload_widgets() {
+    if ! shell_running; then
+        log "skip: plasma-plasmashell is not running"
+        return 1
+    fi
+    if [ "${DRY_RUN:-0}" = "1" ]; then
+        log "DRY RUN: would reload widgets now"
+        return 0
+    fi
+    log "reloading widgets (restarting plasma-plasmashell)"
+    systemctl --user restart plasma-plasmashell.service
+    return 0
+}
+
+case "${1:-}" in
+--status)
+    echo "connectivity=$(nm_prop Connectivity) state=$(nm_prop State)"
+    if is_online; then echo "online=yes"; else echo "online=no"; fi
+    echo "enabled=$ENABLED debounce=${DEBOUNCE}s cooldown=${COOLDOWN}s poll=${POLL}s"
+    echo "log=$LOG"
+    exit 0
+    ;;
+--now)
+    reload_widgets && echo "widgets reloaded" || echo "plasmashell not running" >&2
+    exit 0
+    ;;
+esac
+
+[ "$ENABLED" = "1" ] || { log "disabled in $CONF -- exiting"; exit 0; }
+
+online=0
+is_online && online=1
+pending_since=0
+last_reload=0
+
+log "watcher started (online=$online)"
+
+last_check=0
+
+# gdbus feeds the loop through fd 3 rather than a pipe, so the loop body runs in
+# THIS shell: a `cmd | while` would fork a second bash for the loop and put the
+# state variables in a subshell. The read timeout is the fallback, so a missed or
+# dropped signal costs POLL seconds, never the whole feature.
+exec 3< <(gdbus monitor --system --dest "$NM_DEST" 2>/dev/null)
+
+while :; do
+    read -r -t "$POLL" _ <&3
+    rc=$?
+    # >128 is the read timeout, which is the fallback tick and perfectly normal.
+    # Anything else is EOF: the monitor died, and looping on a closed pipe would
+    # spin a core. Bail out and let systemd's Restart= bring the watcher back.
+    if [ "$rc" -ne 0 ] && [ "$rc" -le 128 ]; then
+        log "gdbus monitor ended -- exiting for a restart"
+        exit 1
+    fi
+
+    now=$(date +%s)
+
+    # Bringing a link up emits a burst of PropertiesChanged; without this the
+    # burst would turn into a burst of busctl calls for no new information.
+    if [ "$pending_since" = "0" ] && [ $((now - last_check)) -lt 2 ]; then
+        continue
+    fi
+    last_check=$now
+
+    if is_online; then
+        if [ "$online" = "0" ]; then
+            online=1
+            pending_since=$now
+            log "link came up -- waiting ${DEBOUNCE}s before reloading"
+        fi
+        if [ "$pending_since" != "0" ] && [ $((now - pending_since)) -ge "$DEBOUNCE" ]; then
+            if [ $((now - last_reload)) -lt "$COOLDOWN" ]; then
+                log "skip: reloaded $((now - last_reload))s ago, cooldown is ${COOLDOWN}s"
+                pending_since=0
+            elif reload_widgets; then
+                last_reload=$now
+                pending_since=0
+            else
+                pending_since=0
+            fi
+        fi
+    else
+        if [ "$online" = "1" ]; then
+            log "link went down"
+        fi
+        online=0
+        pending_since=0
+    fi
+done

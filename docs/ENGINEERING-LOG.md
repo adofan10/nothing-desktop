@@ -560,3 +560,203 @@ Old layout: `~/nothing-rice-backup/appletsrc.pre-quote-20260823-021051`.
 **Mapping screenshots to widget coordinates:** logical→physical is x2.1538 (3840/1783),
 and the desktop containment starts **~63 logical px below y=0** because the dynamic
 island panel offsets it. Forgetting that offset crops the wrong region.
+
+---
+
+# Phase 12–14 — connectivity sheets, lyrics, app drawer, gestures, and an audit
+
+## The island grows instead of opening windows
+
+The network and Bluetooth cards used to launch a KCM. Now they turn the pill into a
+picker, and a third sheet turns the media card into a full now-playing screen.
+
+**Wi-Fi** goes through `PlasmaNM.Handler` from `org.kde.plasma.networkmanagement` —
+the same object plasma-nm's own applet uses, so saved profiles, the kded secret
+agent and enterprise networks keep working:
+
+- `addAndActivateConnection(devicePath, specificPath, password)` — inline join
+- `activateConnection(connectionPath, devicePath, specificPath)` — a network that
+  already has a `Uuid`
+
+`NetworkModel`'s role names are the `ItemRole` enum minus "Role": `Name`, `Ssid`,
+`Signal`, `SecurityType`, `ConnectionState`, `DevicePath`, `SpecificPath`, `Uuid`,
+`Type`.
+
+The password screen is a **second state of the sheet**, not an inline row.
+`AppletProxyModel` re-sorts live on signal strength, so a row that sprouted a
+password field would wander off under the cursor.
+
+**Bluetooth** uses `org.kde.bluezqt`. `Device::pair()` is **not exposed to QML** —
+only `connectToDevice()` / `disconnectFromDevice()`. Pairing therefore calls
+`org.bluez.Device1.Pair` over `busctl`. Deliberately not `bluetoothctl`: that
+registers a *competing* agent and steals the PIN prompt from bluedevil.
+
+## The stutter, and why the popup window must not resize
+
+First cut animated the popup's `implicitHeight` between sheet sizes. That
+renegotiates the Wayland surface every frame and visibly stutters.
+
+The popup window is now a fixed 500×660 and never resizes. Only the black
+`Rectangle` inside it animates its height, which is pure scene-graph work. Because
+`backgroundHints: NoBackground`, the leftover area is transparent — so it gets a
+dismiss `MouseArea`, and the pill gets one of its own to swallow clicks.
+
+## Lyrics
+
+Source is [LRCLIB](https://lrclib.net) — open, no key, and it serves LRC timestamps
+rather than plain text, which is what makes the lines move.
+
+`/api/get` wants an exact album+duration match and 404s for most tracks, because
+the album string MPRIS reports rarely matches to the character. A miss falls through
+to `/api/search`, scoring hits by "has syncedLyrics" first, then closest running time.
+
+**Slowed and sped-up edits** are the same words at another tempo, so the original's
+stamps run early or late by exactly the length ratio. `_timeScale()` rescales when
+the ratio is outside 0.97–1.03 but inside 0.6–1.7. Without it every "(SLOWED)" track
+scrolls visibly out of time.
+
+Two things that look like details and are not:
+
+- **Emphasis is colour and `scale`, never `font.pixelSize`.** A size change moves
+  `implicitHeight`, which reflows the whole ListView on every line and makes the
+  scroll jump. `scale` with `transformOrigin: Item.Left` costs no layout at all.
+- MPRIS reports position once a second, far too coarse to land a line on the beat.
+  `main.qml` extrapolates at 10 Hz and re-anchors on every real `positionChanged`.
+
+Scrolling is `ListView.StrictlyEnforceRange` with `preferredHighlightBegin ==
+preferredHighlightEnd == height * 0.34`: the playing line is pinned a third of the
+way down and the list slides under it.
+
+The cover bleeds past the layout's content inset with `Layout.rightMargin: -16.9`
+— negative layout margins do work — and a horizontal `Gradient` scrim takes it from
+`#ff000000` at the left to `#00000000` at the right. Painting a scrim beats fading
+the image: identical on a black pill, and no shader.
+
+## App drawer
+
+`X-Plasma-Provides: ["org.kde.plasma.launchermenu"]` is the whole trick for the Meta
+key. `activate application launcher=Meta` was **already** in `kglobalshortcutsrc`;
+it simply had no applet claiming it. No shortcut was changed.
+
+Plasma expands the stub `fullRepresentation` on that shortcut, so `main.qml`
+intercepts `onExpandedChanged`, sets `expanded = false`, and opens its own window.
+
+That window is **`Kicker.DashboardWindow`** — the primitive KDE's own Application
+Dashboard uses. Full screen on the visualParent's screen,
+`KWindowEffects::enableBlurBehind`, and a `keyEventProxy` so every keystroke lands
+in the search field. Far more reliable than making a `PlasmaCore.Dialog` go
+fullscreen on Wayland.
+
+Its `visible` must be **assigned, not bound**: DashboardWindow hides itself in C++
+on focus loss, which would tear down a binding permanently.
+
+Paging is `flow: GridView.FlowTopToBottom` with `cellWidth`/`cellHeight` dividing
+the viewport exactly, so one viewport width is exactly one page and snapping is
+`Math.round(contentX / width)`.
+
+**First-open layout bug:** the compositor sizes the window a frame *after* it is
+shown, so the first layout ran against a zero-width grid and the tiles came out
+garbled until a model change forced a relayout — typing "fixed" it. Cured with a
+zero-interval `forceLayout()` and a relayout on `onWidthChanged`.
+
+Open and close are two flags — `drawerOpen` (intent) and `drawerMapped` (window on
+screen) — so the window survives its own exit animation; `AppDrawer` calls
+`finishClose()` from a `ScriptAction` at the end.
+
+## Three-finger window gestures
+
+**KWin cannot bind a touchpad swipe from a script.**
+`EffectsHandler::registerTouchpadSwipeShortcut()` is present in `libkwin.so.6`, but
+the JS API exposes only `registerShortcut`, `registerScreenEdge`,
+`registerRealtimeScreenEdge` and `registerTouchScreenEdge` — for scripts *and* for
+`ScriptedEffect`. Nothing gesture-related on KWin's D-Bus, and Plasma 6.6 ships no
+gestures KCM (only `kcm_touchpad` and `kcm_kwintouchscreen`).
+
+So: a KWin script registers two global shortcuts with **no default key** (anything
+in the Meta+Shift range risks colliding with a stock binding), and
+`nothing-gestures` reads `libinput debug-events` and invokes them via
+`qdbus6 org.kde.kglobalaccel /component/kwin ...invokeShortcut <name>`.
+
+- **Resolve the successor before minimising.** KWin refocuses on its own the moment
+  the active window goes away; read `stackingOrder` after and "next" is wrong.
+- **Calibrate, do not guess.** The first threshold was 40 libinput units, which
+  would have ignored *every* real swipe — measured swipes accumulate 4.6–15.0.
+  `nothing-gestures --calibrate` prints per-swipe totals and changes nothing.
+- The axis-ratio test (vertical must beat horizontal by 1.5×) is what keeps this
+  clear of KWin's own three-finger left/right desktop switching.
+- `grep --line-buffered` filters the libinput stream in C before bash sees it;
+  without it the loop parses every POINTER_MOTION line the touchpad emits.
+
+**KWin scripts have `callDBus(service, path, interface, method, args...)`** — that
+is how the script puts its OSD up, via
+`org.kde.plasmashell /org/kde/osdService showText`. It lives in the script rather
+than the daemon so it fires on every path in: touchpad, key binding, or D-Bus.
+
+Two development gotchas that cost real time:
+
+- **`reconfigure` does not reload a KWin script.** Use `/Scripting unloadScript
+  <name>`, then `loadScript <path> <name>`, then `start` — otherwise edits appear to
+  do nothing while the old copy keeps running.
+- Script `print()` / `console.log` is filtered out of the journal. **`console.warn`
+  shows up**, as `js:` under the kwin_wayland unit.
+
+## Widget reload on network-up
+
+Several widgets fetch exactly once from `Component.onCompleted` — the weather widget
+geocodes once, at `main.qml:426` — and plasmashell is up seconds before Wi-Fi
+associates at login, so they stay empty until something restarts the shell.
+
+There is **no per-applet reload** in Plasma's scripting API and no D-Bus call for
+one, so "reload" is `systemctl --user restart plasma-plasmashell.service`. Nothing
+is lost: applet config is already on disk.
+
+Online is read as a **number** off NetworkManager's D-Bus properties
+(`Connectivity == 4`, or `State >= 70` when connectivity checking is off) — never
+from `nmcli` text, which is translated.
+
+`gdbus monitor` feeds the loop over **fd 3 via process substitution**, not a pipe:
+`cmd | while` forks a second bash and strands the state variables in a subshell.
+`read -t` doubles as the fallback tick; rc > 128 is the timeout, any other non-zero
+is EOF and exits so systemd restarts it.
+
+## Performance audit
+
+Measured, not guessed. `stats.sh` was the whole story.
+
+| what | cost |
+|---|---|
+| old — everything, every 2 s | 88.7 ms/call = **4.44 % of a core, always** |
+| new `lite` — closed, every 3 s | 28.3 ms/call = **0.94 % of a core** |
+| new `full` — only while open, 2 s | 88.7 ms/call, only when something reads it |
+
+Per command: `nmcli` 22 ms, `wpctl` 15 ms, `bluetoothctl` 10 ms, `busctl` 6 ms. The
+pill draws only volume, brightness, battery and the clock, so `lite` does `wpctl`
+plus two sysfs reads. Verified by timeline sampling across an open/close cycle:
+`full` while open, `lite` while closed, **never both** — a changed
+`connectedSources` does disconnect the old source.
+
+Everything else that was awake with nothing to show:
+
+- `PlasmaNM.*` and `BluezQt.*` moved out of `main.qml` into the sheets.
+  `NetworkModel` subscribes to every AP's signal-strength updates, and
+  `BluezQt.Manager` starts a BlueZ client the instant it is *referenced*.
+- **`ExpandedPanel` is built at applet load and never destroyed**, so its infinite
+  waveform animation looped at 60 fps behind a closed popup for as long as anything
+  was playing. `running:` now also requires `panelOpen`.
+- MPRIS `updatePosition()` polling gated on `panelOpen`.
+- Lyrics cache bounded to 24 entries, FIFO.
+- The drawer drops its GridView model when unmapped, freeing app-icon pixmaps that
+  were resident from login onwards.
+
+No leak: plasmashell RSS flat at 339–340 MiB across a 60 s idle sample.
+
+**Do not import `org.kde.plasma.private.volume` or
+`org.kde.plasma.private.brightnesscontrolplugin`** to replace the polling. Doing so
+kills the applet outright and Plasma logs **nothing at all** — no import error, no
+QML error, the applet simply never appears. Diagnose a vanished applet by checking
+whether its side effects still run (`pgrep -f scripts/stats.sh`), not by looking for
+an error.
+
+Two pre-existing CPU sinks found and left alone, both third-party: a
+`font.pixelSize` **binding loop** in jaxparrow07's digitalclocklarge
+(`main.qml:116`) and a recursive Layout rearrange in its weather widget.

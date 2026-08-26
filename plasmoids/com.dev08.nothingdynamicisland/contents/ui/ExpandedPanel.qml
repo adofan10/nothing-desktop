@@ -76,17 +76,68 @@ Item {
         easing.type: Easing.Bezier; easing.bezierCurve: [0.25, 0.1, 0.25, 1.0, 1.0, 1.0]
     }
 
+    // "" = home, "wifi" / "bt" / "media" = a sheet. The island does not open a
+    // second window for these: the pill itself grows, which is the whole point of it.
+    readonly property string sheet: island ? island.sheet : ""
+    readonly property int homeHeight: 404
+    // Per-sheet heights. The window is always the tallest of them (see below), so
+    // these only move the black pill inside it.
+    readonly property int sheetHeight: panel.sheet === "media" ? 660 : 566
+    readonly property int windowHeight: 660
+
+    // The popup WINDOW is a fixed 500x566 and never resizes -- animating a Wayland
+    // surface's size renegotiates the buffer every frame, which is what made the
+    // grow/shrink stutter. Only the black pill inside it changes height, and that
+    // is pure scene-graph work, so it stays at refresh rate.
     Layout.minimumWidth: 500
-    Layout.minimumHeight: 404
+    Layout.minimumHeight: panel.windowHeight
     Layout.preferredWidth: 500
-    Layout.preferredHeight: 404
+    Layout.preferredHeight: panel.windowHeight
     implicitWidth: 500
-    implicitHeight: 404
+    implicitHeight: panel.windowHeight
+
+    // Below the pill the window is transparent, so a click there is a click
+    // outside the island -- dismiss, exactly as clicking off the window does.
+    MouseArea {
+        anchors.fill: parent
+        onClicked: if (panel.island) panel.island.panelOpen = false
+    }
 
     Rectangle {
-        anchors.fill: parent
+        id: shell
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: panel.sheet === "" ? panel.homeHeight : panel.sheetHeight
         radius: 28.6
         color: panel.cBg
+        clip: true
+
+        Behavior on height {
+            NumberAnimation {
+                duration: 320
+                // strong ease-out, no overshoot -- Nothing rules out spring/bounce
+                easing.type: Easing.Bezier
+                easing.bezierCurve: [0.32, 0.72, 0.0, 1.0, 1.0, 1.0]
+            }
+        }
+
+        // swallow clicks that land on the pill's own background, so they do not
+        // reach the dismiss handler above
+        MouseArea { anchors.fill: parent }
+
+      Item {
+        id: homeView
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        // pinned to its designed height so the home rows do not reflow while the
+        // shell is still growing underneath the cross-fade
+        height: panel.homeHeight
+        opacity: panel.sheet === "" ? 1 : 0
+        visible: opacity > 0
+        enabled: panel.sheet === ""
+        Behavior on opacity { NumberAnimation { duration: 150 } }
 
         ColumnLayout {
             anchors.fill: parent
@@ -195,7 +246,8 @@ Item {
                     }
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: panel.island.exec("plasma-open-settings kcm_networkmanagement")
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: panel.island.openSheet("wifi")
                     }
                 }
 
@@ -240,7 +292,8 @@ Item {
                     }
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: panel.island.exec("plasma-open-settings kcm_bluetooth")
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: panel.island.openSheet("bt")
                     }
                 }
 
@@ -310,6 +363,15 @@ Item {
                 Layout.preferredHeight: 109.2
                 radius: 16
                 color: panel.cCard
+
+                // Declared before the contents so the transport buttons and the
+                // seek bar, which sit above it, still take their own clicks --
+                // anything left over opens the full now-playing sheet.
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: panel.island.openSheet("media")
+                }
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -419,8 +481,11 @@ Item {
                         }
 
                         property real phase: 0
+                        // ExpandedPanel is built at applet load and never destroyed,
+                        // so without the panelOpen term this looped at 60 fps behind
+                        // a closed popup for as long as anything was playing.
                         NumberAnimation on phase {
-                            running: panel.island ? panel.island.isPlaying : false
+                            running: panel.island ? (panel.island.isPlaying && panel.island.panelOpen) : false
                             loops: Animation.Infinite
                             from: 0; to: Math.PI * 2; duration: 1400
                         }
@@ -512,7 +577,7 @@ Item {
                                 radius: 9.8
                                 color: (panel.island && panel.island.swRunning) ? panel.cRed : panel.cBor
                                 SequentialAnimation on opacity {
-                                    running: panel.island ? panel.island.swRunning : false
+                                    running: panel.island ? (panel.island.swRunning && panel.island.panelOpen) : false
                                     loops: Animation.Infinite
                                     NumberAnimation { to: 0.35; duration: 620; easing.type: Easing.Bezier; easing.bezierCurve: [0.25, 0.1, 0.25, 1.0, 1.0, 1.0] }
                                     NumberAnimation { to: 1.0;  duration: 620; easing.type: Easing.Bezier; easing.bezierCurve: [0.25, 0.1, 0.25, 1.0, 1.0, 1.0] }
@@ -655,5 +720,23 @@ Item {
             // soak up any extra height so no row stretches out of proportion
             Item { Layout.fillHeight: true; Layout.fillWidth: true }
         }
+      }
+
+        // Sheets are built on demand and thrown away on close, so no Wi-Fi scan
+        // or BlueZ discovery is left running behind a shut island.
+        Loader {
+            id: sheetLoader
+            anchors.fill: parent
+            active: panel.sheet !== ""
+            opacity: panel.sheet !== "" ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 150 } }
+            sourceComponent: panel.sheet === "bt" ? btSheetComponent
+                           : panel.sheet === "media" ? mediaSheetComponent
+                           : wifiSheetComponent
+        }
+        Component { id: wifiSheetComponent;  WifiSheet { island: panel.island } }
+        Component { id: btSheetComponent;    BluetoothSheet { island: panel.island } }
+        Component { id: mediaSheetComponent; MediaSheet { island: panel.island } }
     }
 }

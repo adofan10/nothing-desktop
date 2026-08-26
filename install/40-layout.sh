@@ -42,7 +42,9 @@ out.push("ISLAND_COLORIZER=" + ic.id);
 var dock = new Panel;
 dock.location = "bottom"; dock.alignment = "center"; dock.lengthMode = "fit";
 dock.height = 56; dock.floating = true; dock.hiding = "windowscover";
-try { dock.addWidget("com.himdek.kde.plasma.overview"); } catch (e) {}
+// order matters -- addWidget order is the dock order.
+// start button, then the app icons, then (invisible) colorizer, then overview.
+dock.addWidget("com.dev08.nothingappdrawer");
 var tasks = dock.addWidget("org.kde.plasma.icontasks");
 tasks.currentConfigGroup = ["General"];
 tasks.writeConfig("launchers", "'"$DOCK_LAUNCHERS"'");
@@ -55,6 +57,7 @@ dc.currentConfigGroup = ["General"];
 dc.writeConfig("hideWidget", true);
 dc.writeConfig("animatePropertyChanges", true);
 dc.writeConfig("animationDuration", 300);
+try { dock.addWidget("com.himdek.kde.plasma.overview"); } catch (e) {}
 out.push("DOCK_PANEL=" + dock.id);
 out.push("DOCK_COLORIZER=" + dc.id);
 
