@@ -97,10 +97,14 @@ the whole trick.
 | Three fingers **down** | minimise the active window, focus the one underneath |
 | Three fingers **up** | bring the last one back and focus it |
 
-Exact inverses while you keep swiping. The window animates either way — KWin's
-`squash` effect plays on both, and the monochrome-inactive effect below fades the
-newly focused window from grey back to colour — and a Nothing-styled OSD names what
-just happened, with the arrow pointing the way your fingers went.
+Exact inverses while you keep swiping. The window animates on the way out and back
+— KWin's `squash` effect plays on both, and the monochrome-inactive effect below
+fades the newly focused window from grey back to colour — with no on-screen notice,
+because a gesture you make dozens of times a day should not announce itself.
+
+If you would rather it did, `SHOW_OSD` at the top of
+`kwin/scripts/nothing-window-cycle/contents/code/main.js` puts a Nothing-styled OSD
+up naming the window, with the arrow pointing the way your fingers went.
 
 Three-finger **left/right** still switches virtual desktops: a swipe must be 1.5×
 more vertical than horizontal to count, which keeps the two apart.

@@ -23,8 +23,10 @@
 // every path into these actions: the touchpad, a key binding, or a D-Bus call.
 // callDBus is one of the few host functions KWin exposes to scripts.
 //
-// Set to false for silent gestures; the window animation stays either way.
-var SHOW_OSD = true;
+// Set to true if you want the gestures to announce themselves; the window
+// animation (KWin's `squash`, plus the monochrome-inactive fade on the newly
+// focused window) plays either way.
+var SHOW_OSD = false;
 
 function osd(icon, label, w) {
     if (!SHOW_OSD) return;

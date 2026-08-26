@@ -688,9 +688,14 @@ in the Meta+Shift range risks colliding with a stock binding), and
   without it the loop parses every POINTER_MOTION line the touchpad emits.
 
 **KWin scripts have `callDBus(service, path, interface, method, args...)`** — that
-is how the script puts its OSD up, via
+is how the script can put an OSD up, via
 `org.kde.plasmashell /org/kde/osdService showText`. It lives in the script rather
 than the daemon so it fires on every path in: touchpad, key binding, or D-Bus.
+
+Shipped **off** (`SHOW_OSD = false`): a gesture used dozens of times a day should
+not narrate itself, and the window animation already says what happened. Verify a
+change either way by watching the signal rather than the screen —
+`gdbus monitor --session --dest org.kde.plasmashell | grep osdText`.
 
 Two development gotchas that cost real time:
 
