@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "com.dev08.nothingglyph",
+        "Name": "Nothing Glyph",
+        "Description": "A dot-matrix character that reacts to what you are doing: headphones and a bob when music plays, a bolt in the chest on charge, a slump on low battery, asleep at night",
+        "Category": "System Information",
+        "Icon": "face-smile",
+        "Authors": [ { "Name": "dev08" } ],
+        "License": "GPL-3.0-or-later",
+        "Version": "1.0",
+        "EnabledByDefault": true
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

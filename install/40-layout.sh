@@ -75,7 +75,7 @@ out.push("DESKTOP="  + d.id);
 out.push("W_DATE="   + add(N + "date",              "General",    { themeMode: 0 }));
 out.push("W_BATT="   + add(N + "battery",           "General",    { themeMode: 0 }));
 out.push("W_WEA1="   + add(N + "weather",           "General",    { themeMode: 0, widgetVariant: 0 }));
-out.push("W_WEA2="   + add(N + "weather",           "General",    { themeMode: 0, widgetVariant: 1 }));
+out.push("W_GLYPH="  + add("com.dev08.nothingglyph", "General",   {}));
 out.push("W_QUOTE="  + add("com.dev08.nothingquote","General",    { themeMode: 0 }));
 out.push("W_MEDIA="  + add(N + "media",             "General",    { themeMode: 0 }));
 out.push("W_BIG="    + add(N + "digitalclocklarge", "Appearance", { fontStyle: 1, showDate: true, use24HourFormat: true, useDarkerFont: true, themeMode: 1 }));
@@ -109,7 +109,7 @@ kwriteconfig6 --file $F --group Containments --group "$DOCK_PANEL" --group Apple
 
 # Folder View snaps to a 208 px grid, so these are grid slots, not free pixels.
 # NOTE: these keys live directly under [Containments][N], NOT under [General].
-GEO="Applet-$W_DATE:64,80,208,208,0;Applet-$W_BATT:272,80,208,208,0;Applet-$W_WEA1:64,288,208,208,0;Applet-$W_WEA2:272,288,208,208,0;Applet-$W_QUOTE:64,496,416,208,0;Applet-$W_MEDIA:64,704,416,208,0;Applet-$W_BIG:592,80,624,208,0;"
+GEO="Applet-$W_DATE:64,80,208,208,0;Applet-$W_BATT:272,80,208,208,0;Applet-$W_WEA1:64,288,208,208,0;Applet-$W_GLYPH:272,288,208,208,0;Applet-$W_QUOTE:64,496,416,208,0;Applet-$W_MEDIA:64,704,416,208,0;Applet-$W_BIG:592,80,624,208,0;"
 kwriteconfig6 --file $F --group Containments --group "$DESKTOP" --key "ItemGeometries-1786x1116" "$GEO"
 kwriteconfig6 --file $F --group Containments --group "$DESKTOP" --key "ItemGeometriesHorizontal" "$GEO"
 

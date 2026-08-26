@@ -109,6 +109,24 @@ up naming the window, with the arrow pointing the way your fingers went.
 Three-finger **left/right** still switches virtual desktops: a swipe must be 1.5×
 more vertical than horizontal to count, which keeps the two apart.
 
+## The Glyph
+
+<div align="center">
+<img src="docs/images/glyph.png" width="100%">
+</div>
+
+A dot-matrix character on a 16x16 grid that reacts to what the machine is doing.
+Headphones and a bob when music plays, a bolt when it is charging, a slump and a
+red wash under 15 %, zeds after 23:00. Tap it to cycle the poses.
+
+Every input is event-driven — MPRIS, PowerDevil, and a one-minute clock tick.
+Nothing here polls a subprocess: the widget sits on the desktop all day, and the
+island's own audit showed how fast a 2-second shell poll turns into 4 % of a core.
+
+Poses are assembled from parts — head, torso, eyes, mouth, arms, props — so the
+five states share one character instead of being five drawings that drift apart.
+Adding another is a few lines in `Glyph.js`.
+
 ## The widget grid
 
 <table>
@@ -122,8 +140,9 @@ more vertical than horizontal to count, which keeps the two apart.
 </tr>
 </table>
 
-Date, battery, weather, quote of the day and now-playing on a strict 208 px grid,
-with the big dot-matrix clock to the right of it as the one focal element.
+Date, battery, weather, the Glyph, quote of the day and now-playing on a strict
+208 px grid, with the big dot-matrix clock to the right of it as the one focal
+element.
 
 ---
 
@@ -137,6 +156,7 @@ with the big dot-matrix clock to the right of it as the one focal element.
 | App drawer | Original plasmoid — full-screen paged launcher on the Meta key | **this repo** |
 | Window gestures | KWin script + libinput watcher, three-finger up/down | **this repo** |
 | Widget reload on network-up | Systemd user service, fixes empty widgets after login | **this repo** |
+| Glyph | Original plasmoid — dot-matrix character that reacts to what you are doing | **this repo** |
 | Quote of the day | Original plasmoid — 65 quotes, one a day | **this repo** |
 | Inactive windows | KWin effect: unfocused windows drain to greyscale | **this repo** |
 | Terminal | Konsole `Nothing` profile + colour scheme | **this repo** |
@@ -243,6 +263,7 @@ every track is in the database.
 ├── plasmoids/
 │   ├── com.dev08.nothingdynamicisland/
 │   ├── com.dev08.nothingappdrawer/
+│   ├── com.dev08.nothingglyph/
 │   └── com.dev08.nothingquote/
 ├── kwin/
 │   ├── effects/nothing-monochrome-inactive/
@@ -320,6 +341,21 @@ Plasma has no per-applet reload in its scripting API and no D-Bus call for one, 
 this watches NetworkManager and restarts `plasma-plasmashell.service` on a genuine
 offline→online edge, debounced and rate-limited. Online is read as a *number* off
 NetworkManager's D-Bus properties; `nmcli`'s connectivity strings are translated.
+
+### Glyph — `com.dev08.nothingglyph`
+
+Sits in the grid slot the second weather widget used to hold; the weather card
+beside it already carries the temperature and the condition.
+
+Two things only became obvious by rendering it rather than reasoning about it.
+An **outlined** head reads as a face at 16x16 — a filled blob with the eyes
+punched out reads as three vertical bars. And the head and torso need a blank row
+between them: joined by a neck they merge into one mass and it stops reading as a
+figure at all.
+
+The card is deliberately not styled to taste. It matches the widgets sharing the
+grid exactly — inset 10, radius 20, `#1a1a1a` at 95 % opacity — because anything
+else makes the cell look bigger and a different black than its neighbours.
 
 ### Quote of the day — `com.dev08.nothingquote`
 

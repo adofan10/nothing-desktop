@@ -9,7 +9,7 @@ PLASMOIDS="$LOCAL/plasma/plasmoids"
 
 say "Custom plasmoids"
 mkdir -p "$PLASMOIDS"
-for p in com.dev08.nothingdynamicisland com.dev08.nothingquote com.dev08.nothingappdrawer; do
+for p in com.dev08.nothingdynamicisland com.dev08.nothingquote com.dev08.nothingappdrawer com.dev08.nothingglyph; do
     rm -rf "${PLASMOIDS:?}/$p"
     cp -r "$REPO/plasmoids/$p" "$PLASMOIDS/"
     step "$p"
